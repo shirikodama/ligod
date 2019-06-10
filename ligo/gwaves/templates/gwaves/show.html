@@ -1,0 +1,18 @@
+{% extends 'gwaves/base.html' %}
+{% block content %}
+<h3>{{gwave.id}}: {{params.AlertType}} {{boom_type}} {{boom_max}}% {{ gwave.role }} @{{boom_time}} GMT</h3>
+<p><a href="{{params.EventPage}}">Go to Ligo Event for {{params.GraceID}}</a></p>
+<ul>
+  {% for key, value in params.items %}
+  <li>{{key}} = {{value}}</li>
+  {% endfor %}
+</ul>
+<form method="post" action="{% url "gwave_delete" gwave.id %}">
+  {% csrf_token %}  
+  <input type="submit" value="Delete">
+</form>
+<h3>Raw JSON</h3>
+<pre>
+  {{json}}
+</pre>
+{% endblock %}

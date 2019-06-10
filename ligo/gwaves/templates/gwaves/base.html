@@ -1,0 +1,13 @@
+{% load static %}
+<html>
+  <head>
+    <link rel="stylesheet" type="text/css" href="{% static 'gwaves/style.css' %}">  
+  </head>
+  <body>
+    <p class=center>
+      <a href="/gwaves"><img src="{% static "images/ligo.png" %}"></a>
+    </p>
+    {% block content %}
+    {% endblock %}    
+  </body>
+</html>

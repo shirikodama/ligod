@@ -1,0 +1,19 @@
+{% extends 'gwaves/base.html' %}
+{% block content %}
+<h3>List of Ligo Events</h3>
+<table style="width: 800px">
+  <tr>
+    <th>ID</th><th>GID</th><th>Type</th><th>Alert Type</th><th>Received</th><th>Exploded</th>
+  </tr>
+  {% for gwave in gwaves %}
+    <tr>
+    <td>{{gwave.id}}</td>
+    <td><a href="{% url "gwave_view" gwave.id %}">{{ gwave.gracedb_id }}</a></td>    
+    <td>{{ gwave.role }}</td>
+    <td>{{ gwave.alerttype }}</td>    
+    <td>{{ gwave.r_date }}</td>
+    <td>{{ gwave.x_date }}</td>    
+    </tr>
+  {% endfor %}
+</table>
+{% endblock %}

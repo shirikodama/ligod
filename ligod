@@ -1,0 +1,127 @@
+#!/usr/bin/python -u
+import os
+import sqlite3
+import sys
+import gcn
+import healpy as hp
+import smtplib, ssl
+import argparse
+import xmltodict, json
+import lxml.etree
+import daemon
+import lockfile
+import time
+from datetime import datetime
+from getpass import getpass
+
+user = None
+password = None
+args = None
+dbconn = None
+dbfile = './ligo.sq3'
+gwtable = 'gwaves_gwave'
+
+# Function to call every time a GCN is received.
+# Run only for notices of type
+# LVC_PRELIMINARY, LVC_INITIAL, or LVC_UPDATE.
+@gcn.handlers.include_notice_types(
+    gcn.notice_types.LVC_PRELIMINARY,
+    gcn.notice_types.LVC_INITIAL,
+    gcn.notice_types.LVC_UPDATE,
+    gcn.notice_types.LVC_RETRACTION)
+def process_gcn(payload, root):
+    _process_gcn(payload, root)
+    sys.stdout.flush()
+
+def _process_gcn(payload, root):
+    if args.v:
+        print("@process...", root.attrib['role'])
+    if not args.a:
+        if (args.t):    
+            if root.attrib['role'] != 'test':
+                return
+        else:
+            if root.attrib['role'] != 'observation':
+                return
+    output = ''
+    # Read all of the VOEvent parameters from the "What" section.
+    params = {elem.attrib['name']:
+              elem.attrib['value']
+              for elem in root.iterfind('.//Param')}
+    pdict = xmltodict.parse(payload)
+    extime = pdict['voe:VOEvent']['WhereWhen']['ObsDataLocation']["ObservationLocation"]['AstroCoords']['Time']['TimeInstant']['ISOTime']
+    extime = datetime.strptime(extime, "%Y-%m-%dT%H:%M:%S.%f")
+    extime = (extime - datetime(1970, 1, 1)).total_seconds()    
+    
+    dbconn.execute("insert into "+gwtable+" (role, msg, received_at, gracedb_id, exploded_at, alerttype) VALUES (?, ?, ?, ?, ?, ?)", (root.attrib['role'], payload, time.time(), params['GraceID'], extime, params['AlertType']))
+    dbconn.commit()
+    print("%s occurred at %s" % (params['AlertType'], extime))    
+    if args.v:
+        # Print all parameters.
+        for key, value in params.items():
+            output += key + '=' + value+"\n"
+        print(output)
+    if user and password:
+        mail_output(output, user, password)
+
+def mail_output(out, user, password):
+    port = 465  # For SSL
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+    subject = 'New LIGO Update'
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", port, context=context) as server:
+        server.login(user, password)
+        message = 'Subject: {}\n\n{}'.format(subject, out)
+        server.sendmail(user, user, message)
+        server.quit
+
+parser = argparse.ArgumentParser(description='LIGO Updater')
+parser.add_argument('-t', help='test mode', action='store_true')
+parser.add_argument('-a', help='all events', action='store_true')
+parser.add_argument('-m', help='mail to')
+parser.add_argument('-d', help='sqlite3 db file')
+parser.add_argument('-v', help='verbose', action='store_true')
+args = parser.parse_args()
+
+if (args.m):
+    user = args.m
+    password = getpass("Type your password and press enter: ")
+
+if (args.d):
+    dbfile = args.d
+
+if not os.path.isfile(dbfile):
+    dbconn = sqlite3.connect(dbfile)    
+    dbconn.execute('''CREATE TABLE %s
+    (ID INTEGER PRIMARY KEY AUTOINCREMENT,
+    ROLE           TEXT    NOT NULL,
+    GRACEDB_ID     TEXT,
+    RECEIVED_AT    INTEGER,
+    EXPLODED_AT    INTEGER,
+    ALARMTYPE      TEXT,
+    MSG            TEXT    NOT NULL);''' % gwtable)
+    print("created ligo table...")
+else:
+    dbconn = sqlite3.connect(dbfile)    
+
+if (args.t):
+    # test code
+    payload = open('MS181101ab-1-Preliminary.xml', 'rb').read()
+    root = lxml.etree.fromstring(payload)
+    dict = xmltodict.parse(payload)
+    print(json.dumps(dict, indent=2, sort_keys=True))
+    process_gcn(payload, root)
+else:
+    out = open('/var/log/ligod.log', "a+")
+    # close and reopen db because daemon closes all fd's    
+    dbconn.close()
+    with daemon.DaemonContext(detach_process=True,
+                              pidfile=lockfile.FileLock('/var/run/ligod.pid'),
+                              stdout=out, stderr=out):
+        dbconn = sqlite3.connect(dbfile)            
+        # Listen for GCNs until the program is interrupted
+        # (killed or interrupted with control-C).
+        print("waiting for updates...")
+        gcn.listen(handler=process_gcn)
+    
